@@ -6,6 +6,7 @@ import (
 	"ossyne/internal/config"
 	"ossyne/internal/db"
 	"ossyne/internal/models"
+	"ossyne/internal/api"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -45,7 +46,20 @@ func main() {
 	})
 
 	userHandler := &UserHandler{}
+	projectHandler := &api.ProjectHandler{}
+	taskHandler := &api.TaskHandler{}
+	claimHandler := &api.ClaimHandler{}
+	contributionHandler := &api.ContributionHandler{}
+
 	e.POST("/users", userHandler.createUser)
+	e.GET("/projects", projectHandler.ListProjects)
+	e.POST("/projects", projectHandler.CreateProject)
+	e.GET("/tasks", taskHandler.ListTasks)
+	e.POST("/tasks", taskHandler.CreateTask)
+	e.POST("/claims", claimHandler.CreateClaim)
+	e.GET("/claims", claimHandler.ListClaims)
+	e.POST("/contributions", contributionHandler.CreateContribution)
+	e.GET("/contributions", contributionHandler.ListContributions)
 
 	fmt.Printf("Starting server on port %s\n", cfg.ServerPort)
 	if err := e.Start(":" + cfg.ServerPort); err != nil {
