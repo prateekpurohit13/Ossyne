@@ -7,7 +7,7 @@ CREATE TABLE users (
     email VARCHAR(255) NOT NULL UNIQUE,
     avatar_url VARCHAR(255),
     github_id VARCHAR(255) UNIQUE,
-    reputation_score INT NOT NULL DEFAULT 0,
+    ratings INT NOT NULL DEFAULT 0,
     roles JSON
 ) ENGINE=InnoDB;
 

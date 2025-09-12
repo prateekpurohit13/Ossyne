@@ -7,7 +7,6 @@ import (
 	"ossyne/internal/db"
 	"ossyne/internal/models"
 	"ossyne/internal/api"
-
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 )
@@ -27,6 +26,15 @@ func (h *UserHandler) createUser(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusCreated, user)
+}
+
+func (h *UserHandler) GetUser(c echo.Context) error {
+	id := c.Param("id")
+	var user models.User
+	if err := db.DB.First(&user, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "User not found"})
+	}
+	return c.JSON(http.StatusOK, user)
 }
 
 func main() {
@@ -50,8 +58,12 @@ func main() {
 	taskHandler := &api.TaskHandler{}
 	claimHandler := &api.ClaimHandler{}
 	contributionHandler := &api.ContributionHandler{}
+	mentorHandler := &api.MentorHandler{}
+	skillHandler := &api.SkillHandler{}
+	userSkillHandler := &api.UserSkillHandler{}
 
 	e.POST("/users", userHandler.createUser)
+	e.GET("/users/:id", userHandler.GetUser)
 	e.GET("/projects", projectHandler.ListProjects)
 	e.POST("/projects", projectHandler.CreateProject)
 	e.GET("/tasks", taskHandler.ListTasks)
@@ -60,6 +72,13 @@ func main() {
 	e.GET("/claims", claimHandler.ListClaims)
 	e.POST("/contributions", contributionHandler.CreateContribution)
 	e.GET("/contributions", contributionHandler.ListContributions)
+	e.PUT("/contributions/:id/accept", contributionHandler.AcceptContribution)
+	e.PUT("/contributions/:id/reject", contributionHandler.RejectContribution)
+	e.POST("/mentor/endorse", mentorHandler.EndorseUser)
+	e.POST("/skills", skillHandler.CreateSkill)
+	e.GET("/skills", skillHandler.ListSkills)
+	e.POST("/users/skills", userSkillHandler.AddUserSkill)
+	e.GET("/users/:user_id/skills", userSkillHandler.ListUserSkills)
 
 	fmt.Printf("Starting server on port %s\n", cfg.ServerPort)
 	if err := e.Start(":" + cfg.ServerPort); err != nil {

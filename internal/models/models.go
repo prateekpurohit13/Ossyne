@@ -11,9 +11,10 @@ type User struct {
 	Email           string   `gorm:"unique;not null" json:"email"`
 	AvatarURL       string   `json:"avatar_url"`
 	GithubID        *string  `gorm:"unique" json:"github_id"`
-	ReputationScore int      `gorm:"default:0" json:"reputation_score"`
+	Ratings         int      `gorm:"default:0" json:"ratings"`
 	Roles           JSONStringSlice `gorm:"type:json" json:"roles"`
 	Projects        []Project `gorm:"foreignKey:OwnerID"`
+	UserSkills      []UserSkill `gorm:"foreignKey:UserID"`
 }
 
 type Project struct {
@@ -66,5 +67,30 @@ type Contribution struct {
 	PayoutAmount     float64    `gorm:"type:decimal(10,2);default:0.00" json:"payout_amount"`
 
 	Task Task `gorm:"foreignKey:TaskID"`
+	User User `gorm:"foreignKey:UserID"`
+}
+
+type Skill struct {
+	gorm.Model
+	Name        string `gorm:"unique;not null" json:"name"`
+	Description string `json:"description"`
+}
+
+type UserSkill struct {
+	UserID  uint   `gorm:"primaryKey" json:"user_id"`
+	SkillID uint   `gorm:"primaryKey" json:"skill_id"`
+	Level   string `gorm:"type:enum('beginner', 'intermediate', 'expert');default:'beginner';not null" json:"level"`
+	User  User `gorm:"foreignKey:UserID"`
+	Skill Skill `gorm:"foreignKey:SkillID"`
+}
+
+type ReputationEventLog struct {
+	gorm.Model
+	UserID     uint      `gorm:"not null" json:"user_id"`
+	EventType  string    `gorm:"type:enum('contribution_accepted', 'mentor_endorsement', 'bounty_earned', 'manual_adjustment');not null" json:"event_type"`
+	ScoreChange int      `gorm:"not null" json:"score_change"`
+	RelatedID  *uint     `json:"related_id,omitempty"`
+	Notes      string    `gorm:"type:text" json:"notes"`
+
 	User User `gorm:"foreignKey:UserID"`
 }

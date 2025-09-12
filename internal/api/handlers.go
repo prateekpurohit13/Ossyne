@@ -5,9 +5,10 @@ import (
 	"net/http"
 	"ossyne/internal/db"
 	"ossyne/internal/models"
+	"ossyne/internal/services"
 	"strconv"
-
 	"github.com/labstack/echo/v4"
+	"gorm.io/gorm"
 )
 
 type UserHandler struct{}
@@ -257,4 +258,138 @@ func (h *ContributionHandler) ListContributions(c echo.Context) error {
 
 	query.Preload("Task").Preload("User").Find(&contributions)
 	return c.JSON(http.StatusOK, contributions)
+}
+
+func (h *ContributionHandler) AcceptContribution(c echo.Context) error {
+	contributionIDStr := c.Param("id")
+	contributionID, err := strconv.ParseUint(contributionIDStr, 10, 64)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid contribution ID"})
+	}
+	var contribution models.Contribution
+	if err := db.DB.First(&contribution, contributionID).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "Contribution not found"})
+	}
+
+	service := services.ContributionService{}
+	if err := service.VerifyAndAcceptContribution(uint(contributionID), contribution.PRURL); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to accept contribution: %v", err)})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Contribution accepted and contributor credited"})
+}
+
+func (h *ContributionHandler) RejectContribution(c echo.Context) error {
+	contributionIDStr := c.Param("id")
+	contributionID, err := strconv.ParseUint(contributionIDStr, 10, 64)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid contribution ID"})
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
+	}
+	service := services.ContributionService{}
+	if err := service.RejectContribution(uint(contributionID), req.Reason); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to reject contribution: %v", err)})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Contribution rejected"})
+}
+
+type MentorHandler struct{}
+
+func (h *MentorHandler) EndorseUser(c echo.Context) error {
+	var req struct {
+		MentorID  uint   `json:"mentor_id"`
+		UserID    uint   `json:"user_id"`
+		RelatedID uint   `json:"related_id"`
+		Notes     string `json:"notes"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
+	}
+	if req.MentorID == 0 || req.UserID == 0 || req.RelatedID == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Mentor ID, User ID, and Related ID are required"})
+	}
+	service := services.ContributionService{}
+	if err := service.MentorEndorsements(req.MentorID, req.UserID, req.RelatedID, req.Notes); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to endorse user: %v", err)})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "User endorsed successfully!"})
+}
+
+type SkillHandler struct{}
+
+func (h *SkillHandler) CreateSkill(c echo.Context) error {
+	skill := new(models.Skill)
+	if err := c.Bind(skill); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
+	}
+
+	if skill.Name == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Skill name is required"})
+	}
+
+	result := db.DB.Create(&skill)
+	if result.Error != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": result.Error.Error()})
+	}
+	return c.JSON(http.StatusCreated, skill)
+}
+
+func (h *SkillHandler) ListSkills(c echo.Context) error {
+	var skills []models.Skill
+	db.DB.Find(&skills)
+	return c.JSON(http.StatusOK, skills)
+}
+
+type UserSkillHandler struct{}
+
+func (h *UserSkillHandler) AddUserSkill(c echo.Context) error {
+	userSkill := new(models.UserSkill)
+	if err := c.Bind(userSkill); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
+	}
+	if userSkill.UserID == 0 || userSkill.SkillID == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "User ID and Skill ID are required"})
+	}
+
+	result := db.DB.Create(&userSkill)
+	if result.Error != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": result.Error.Error()})
+	}
+	return c.JSON(http.StatusCreated, userSkill)
+}
+
+func (h *UserSkillHandler) ListUserSkills(c echo.Context) error {
+	userIDStr := c.Param("user_id")
+	userID, err := strconv.ParseUint(userIDStr, 10, 64)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid user ID"})
+	}
+
+	var userSkills []models.UserSkill
+	db.DB.Preload("Skill").Where("user_id = ?", userID).Find(&userSkills)
+	return c.JSON(http.StatusOK, userSkills)
+}
+
+func (h *UserHandler) GetUser(c echo.Context) error {
+	userIDStr := c.Param("id")
+	userID, err := strconv.ParseUint(userIDStr, 10, 64)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid user ID"})
+	}
+
+	var user models.User
+	if err := db.DB.Preload("UserSkills.Skill").First(&user, userID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": fmt.Sprintf("User with ID %d not found", userID)})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to fetch user: %v", err)})
+	}
+	return c.JSON(http.StatusOK, user)
 }
