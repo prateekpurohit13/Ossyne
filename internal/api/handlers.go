@@ -184,7 +184,9 @@ func (h *ClaimHandler) ListClaims(c echo.Context) error {
 	return c.JSON(http.StatusOK, claims)
 }
 
-type ContributionHandler struct{}
+type ContributionHandler struct {
+	Service *services.ContributionService // <--- ADD THIS LINE
+}
 
 func (h *ContributionHandler) CreateContribution(c echo.Context) error {
 	contribution := new(models.Contribution)
@@ -271,8 +273,10 @@ func (h *ContributionHandler) AcceptContribution(c echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "Contribution not found"})
 	}
 
-	service := services.ContributionService{}
-	if err := service.VerifyAndAcceptContribution(uint(contributionID), contribution.PRURL); err != nil {
+	if h.Service == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Contribution service not initialized"})
+	}
+	if err := h.Service.VerifyAndAcceptContribution(uint(contributionID), contribution.PRURL); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to accept contribution: %v", err)})
 	}
 
@@ -291,15 +295,19 @@ func (h *ContributionHandler) RejectContribution(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
 	}
-	service := services.ContributionService{}
-	if err := service.RejectContribution(uint(contributionID), req.Reason); err != nil {
+	if h.Service == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Contribution service not initialized"})
+	}
+	if err := h.Service.RejectContribution(uint(contributionID), req.Reason); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to reject contribution: %v", err)})
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{"message": "Contribution rejected"})
 }
 
-type MentorHandler struct{}
+type MentorHandler struct {
+	Service *services.ContributionService
+}
 
 func (h *MentorHandler) EndorseUser(c echo.Context) error {
 	var req struct {
@@ -314,8 +322,10 @@ func (h *MentorHandler) EndorseUser(c echo.Context) error {
 	if req.MentorID == 0 || req.UserID == 0 || req.RelatedID == 0 {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Mentor ID, User ID, and Related ID are required"})
 	}
-	service := services.ContributionService{}
-	if err := service.MentorEndorsements(req.MentorID, req.UserID, req.RelatedID, req.Notes); err != nil {
+	if h.Service == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Contribution service not initialized"})
+	}
+	if err := h.Service.MentorEndorsements(req.MentorID, req.UserID, req.RelatedID, req.Notes); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to endorse user: %v", err)})
 	}
 
@@ -392,4 +402,71 @@ func (h *UserHandler) GetUser(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to fetch user: %v", err)})
 	}
 	return c.JSON(http.StatusOK, user)
+}
+
+type PaymentHandler struct {
+	Service *services.PaymentService
+}
+
+func NewPaymentHandler() *PaymentHandler {
+	return &PaymentHandler{
+		Service: services.NewPaymentService(),
+	}
+}
+
+func (h *PaymentHandler) FundTaskBounty(c echo.Context) error {
+	var req struct {
+		TaskID       uint    `json:"task_id"`
+		FunderUserID uint    `json:"funder_user_id"`
+		Amount       float64 `json:"amount"`
+		Currency     string  `json:"currency"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
+	}
+	if req.TaskID == 0 || req.FunderUserID == 0 || req.Amount <= 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Task ID, Funder User ID, and positive Amount are required"})
+	}
+	if req.Currency == "" {
+		req.Currency = "USD"
+	}
+	if err := h.Service.FundTaskBounty(req.TaskID, req.FunderUserID, req.Amount, req.Currency); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to fund task bounty: %v", err)})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Task bounty funded and escrowed successfully!"})
+}
+
+func (h *PaymentHandler) RefundTaskBounty(c echo.Context) error {
+	taskIDStr := c.Param("id")
+	taskID, err := strconv.ParseUint(taskIDStr, 10, 64)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid task ID"})
+	}
+
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
+	}
+	if err := h.Service.RefundTaskBounty(uint(taskID), req.Reason); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to refund task bounty: %v", err)})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Task bounty refunded successfully!"})
+}
+
+func (h *PaymentHandler) GetUserPayments(c echo.Context) error {
+	userIDStr := c.Param("user_id")
+	userID, err := strconv.ParseUint(userIDStr, 10, 64)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid user ID"})
+	}
+
+	payments, err := h.Service.GetUserPayments(uint(userID))
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to retrieve user payments: %v", err)})
+	}
+	return c.JSON(http.StatusOK, payments)
 }

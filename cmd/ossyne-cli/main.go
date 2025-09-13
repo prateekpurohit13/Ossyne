@@ -33,7 +33,8 @@ reputation in the open-source world, all from your terminal.`,
 	rootCmd.AddCommand(cli.NewProjectCmd())
 	rootCmd.AddCommand(cli.NewTaskCmd())
 	rootCmd.AddCommand(cli.NewRatingsCmd())
-	rootCmd.AddCommand(cli.NewAdminCmd())  
+	rootCmd.AddCommand(cli.NewAdminCmd())
+	rootCmd.AddCommand(cli.NewPaymentCmd())  
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Whoops. There was an error while executing your command '%s'", err)
 		os.Exit(1)

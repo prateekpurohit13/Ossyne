@@ -3,16 +3,21 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"ossyne/internal/api"
 	"ossyne/internal/config"
 	"ossyne/internal/db"
 	"ossyne/internal/models"
-	"ossyne/internal/api"
+	"ossyne/internal/services"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 )
 
 type UserHandler struct {
 	// will add a database dependency here later
+}
+
+type ContributionHandler struct {
+	Service *services.ContributionService
 }
 
 func (h *UserHandler) createUser(c echo.Context) error {
@@ -53,14 +58,18 @@ func main() {
 		return c.String(http.StatusOK, "OK")
 	})
 
+	paymentService := services.NewPaymentService()
+	contributionService := services.NewContributionService(paymentService)
+
 	userHandler := &UserHandler{}
 	projectHandler := &api.ProjectHandler{}
 	taskHandler := &api.TaskHandler{}
 	claimHandler := &api.ClaimHandler{}
-	contributionHandler := &api.ContributionHandler{}
-	mentorHandler := &api.MentorHandler{}
+	contributionHandler := &api.ContributionHandler{Service: contributionService}
+	mentorHandler := &api.MentorHandler{Service: contributionService}
 	skillHandler := &api.SkillHandler{}
 	userSkillHandler := &api.UserSkillHandler{}
+	paymentHandler := api.NewPaymentHandler()
 
 	e.POST("/users", userHandler.createUser)
 	e.GET("/users/:id", userHandler.GetUser)
@@ -79,8 +88,10 @@ func main() {
 	e.GET("/skills", skillHandler.ListSkills)
 	e.POST("/users/skills", userSkillHandler.AddUserSkill)
 	e.GET("/users/:user_id/skills", userSkillHandler.ListUserSkills)
+	e.POST("/bounties/fund", paymentHandler.FundTaskBounty)
+	e.PUT("/bounties/refund/:id", paymentHandler.RefundTaskBounty)
+	e.GET("/users/:user_id/payments", paymentHandler.GetUserPayments)
 
-	fmt.Printf("Starting server on port %s\n", cfg.ServerPort)
 	if err := e.Start(":" + cfg.ServerPort); err != nil {
 		e.Logger.Fatal(err)
 	}

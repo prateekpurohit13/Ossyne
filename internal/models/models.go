@@ -15,6 +15,7 @@ type User struct {
 	Roles           JSONStringSlice `gorm:"type:json" json:"roles"`
 	Projects        []Project `gorm:"foreignKey:OwnerID"`
 	UserSkills      []UserSkill `gorm:"foreignKey:UserID"`
+	Payments        []Payment `gorm:"foreignKey:UserID"`
 }
 
 type Project struct {
@@ -38,6 +39,7 @@ type Task struct {
 	Tags            JSONStringSlice `gorm:"type:json" json:"tags"`
 	SkillsRequired  JSONStringSlice `gorm:"type:json" json:"skills_required"`
 	BountyAmount    float64 `gorm:"type:decimal(10,2);default:0.00" json:"bounty_amount"`
+	BountyEscrowID  *string `json:"bounty_escrow_id,omitempty"`
 	Status          string  `gorm:"type:enum('open', 'claimed', 'in_progress', 'submitted', 'completed', 'archived');default:'open'" json:"status"`
 }
 
@@ -49,7 +51,6 @@ type Claim struct {
 	Status    string    `gorm:"type:enum('pending', 'accepted', 'rejected', 'withdrawn');default:'pending';not null" json:"status"`
 	MentorID  *uint     `json:"mentor_id,omitempty"`
 	Notes     string    `gorm:"type:text" json:"notes"`
-
 	Task   Task `gorm:"foreignKey:TaskID"`
 	User   User `gorm:"foreignKey:UserID"`
 	Mentor User `gorm:"foreignKey:MentorID"`
@@ -65,9 +66,10 @@ type Contribution struct {
 	VerificationStatus string   `gorm:"type:enum('unverified', 'auto_verified', 'manual_verified', 'rejected');default:'unverified';not null" json:"verification_status"`
 	AcceptedAt       *time.Time `json:"accepted_at,omitempty"`
 	PayoutAmount     float64    `gorm:"type:decimal(10,2);default:0.00" json:"payout_amount"`
-
-	Task Task `gorm:"foreignKey:TaskID"`
-	User User `gorm:"foreignKey:UserID"`
+	PaymentID        *uint      `json:"payment_id,omitempty"`
+	Task *Task `gorm:"foreignKey:TaskID"`
+	User *User `gorm:"foreignKey:UserID"`
+	Payment *Payment `gorm:"foreignKey:PaymentID"`
 }
 
 type Skill struct {
@@ -93,4 +95,17 @@ type ReputationEventLog struct {
 	Notes      string    `gorm:"type:text" json:"notes"`
 
 	User User `gorm:"foreignKey:UserID"`
+}
+
+type Payment struct {
+	gorm.Model
+	ContributionID *uint   `json:"contribution_id,omitempty"`
+	UserID         uint    `gorm:"not null" json:"user_id"`
+	Amount         float64 `gorm:"type:decimal(10,2);not null" json:"amount"`
+	Currency       string  `gorm:"type:varchar(3);default:'USD';not null" json:"currency"`
+	Status         string  `gorm:"not null" json:"status"`
+	Type           string  `gorm:"not null" json:"type"`
+	TransactionID  string  `gorm:"unique" json:"transaction_id"`
+	PaymentGateway string  `json:"payment_gateway"`
+	PaymentDate    time.Time `json:"payment_date"`
 }

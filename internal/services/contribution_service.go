@@ -7,14 +7,15 @@ import (
 	"time"
 )
 
-const (
-	ReputationEventContributionAccepted = "contribution_accepted"
-	ReputationEventMentorEndorsement    = "mentor_endorsement"
-	ReputationEventBountyEarned         = "bounty_earned"
-	ReputationEventManualAdjustment     = "manual_adjustment"
-)
+type ContributionService struct {
+	PaymentService *PaymentService
+}
 
-type ContributionService struct{}
+func NewContributionService(paymentService *PaymentService) *ContributionService {
+	return &ContributionService{
+		PaymentService: paymentService,
+	}
+}
 
 func (s *ContributionService) VerifyAndAcceptContribution(contributionID uint, prURL string) error {
 	tx := db.DB.Begin()
@@ -75,7 +76,7 @@ func (s *ContributionService) VerifyAndAcceptContribution(contributionID uint, p
 
 	repLog := models.ReputationEventLog{
 		UserID:      contributor.ID,
-		EventType:   ReputationEventContributionAccepted,
+		EventType:   models.ReputationEventContributionAccepted,
 		ScoreChange: reputationAward,
 		RelatedID:   &contribution.ID,
 		Notes:       fmt.Sprintf("Accepted contribution for task '%s'", task.Title),
@@ -86,6 +87,17 @@ func (s *ContributionService) VerifyAndAcceptContribution(contributionID uint, p
 	}
 	if err := tx.Commit().Error; err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	if task.BountyAmount > 0 && task.BountyEscrowID != nil && *task.BountyEscrowID != "" {
+		fmt.Printf("[BOUNTY]: Task '%s' has a bounty. Attempting to release funds...\n", task.Title)
+		if err := s.PaymentService.ReleaseBountyToContributor(contributionID); err != nil {
+			fmt.Printf("[WARNING]: Failed to release bounty for contribution %d: %v\n", contributionID, err)
+		} else {
+			fmt.Printf("[BOUNTY]: Bounty released for contribution %d.\n", contributionID)
+		}
+	} else {
+		fmt.Printf("[BOUNTY]: Task '%s' has no bounty or escrow ID. Skipping bounty release.\n", task.Title)
 	}
 
 	return nil
@@ -139,7 +151,7 @@ func (s *ContributionService) MentorEndorsements(mentorID, userID, relatedID uin
 
 	repLog := models.ReputationEventLog{
 		UserID:      user.ID,
-		EventType:   ReputationEventMentorEndorsement,
+		EventType:   models.ReputationEventMentorEndorsement,
 		ScoreChange: endorsementScore,
 		RelatedID:   &relatedID,
 		Notes:       notes,
@@ -155,7 +167,7 @@ func (s *ContributionService) MentorEndorsements(mentorID, userID, relatedID uin
 		tx.Save(&mentor)
 		mentorLog := models.ReputationEventLog{
 			UserID:      mentor.ID,
-			EventType:   ReputationEventManualAdjustment,
+			EventType:   models.ReputationEventManualAdjustment,
 			ScoreChange: 5,
 			Notes:       fmt.Sprintf("Mentored user %d for related ID %d", userID, relatedID),
 		}
