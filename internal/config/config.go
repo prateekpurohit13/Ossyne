@@ -12,6 +12,9 @@ type Config struct {
 	DBPort     string `mapstructure:"DB_PORT"`
 	DBName     string `mapstructure:"DB_NAME"`
 	ServerPort string `mapstructure:"SERVER_PORT"`
+	GitHubClientID    string `mapstructure:"GITHUB_CLIENT_ID"`
+	GitHubClientSecret string `mapstructure:"GITHUB_CLIENT_SECRET"`
+	GitHubRedirectURL  string `mapstructure:"GITHUB_REDIRECT_URL"`
 }
 
 func LoadConfig(path string) (config Config, err error) {

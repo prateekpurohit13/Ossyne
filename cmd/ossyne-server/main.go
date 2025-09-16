@@ -74,6 +74,7 @@ func main() {
 	e.POST("/users", userHandler.createUser)
 	e.GET("/users/:id", userHandler.GetUser)
 	e.GET("/projects", projectHandler.ListProjects)
+	e.GET("/users/:id/projects", projectHandler.ListUserProjects)
 	e.POST("/projects", projectHandler.CreateProject)
 	e.GET("/tasks", taskHandler.ListTasks)
 	e.POST("/tasks", taskHandler.CreateTask)

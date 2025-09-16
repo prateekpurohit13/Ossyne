@@ -7,6 +7,7 @@ import (
 	"ossyne/internal/models"
 	"ossyne/internal/services"
 	"strconv"
+
 	"github.com/labstack/echo/v4"
 	"gorm.io/gorm"
 )
@@ -55,6 +56,21 @@ func (h *ProjectHandler) CreateProject(c echo.Context) error {
 func (h *ProjectHandler) ListProjects(c echo.Context) error {
 	var projects []models.Project
 	db.DB.Find(&projects)
+	return c.JSON(http.StatusOK, projects)
+}
+
+func (h *ProjectHandler) ListUserProjects(c echo.Context) error {
+	userIDStr := c.Param("id")
+	userID, err := strconv.ParseUint(userIDStr, 10, 64)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid user ID"})
+	}
+
+	var projects []models.Project
+	if err := db.DB.Where("owner_id = ?", userID).Find(&projects).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to fetch projects: %v", err)})
+	}
+
 	return c.JSON(http.StatusOK, projects)
 }
 
