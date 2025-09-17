@@ -35,6 +35,13 @@ func (m model) updateFundBountyFormView(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleFundBountySubmit() (tea.Model, tea.Cmd) {
+	// Check authentication first
+	if m.loggedInUser == nil {
+		m.err = fmt.Errorf("you must be logged in to fund bounties")
+		m.state = viewAuth
+		return m, nil
+	}
+
 	amountStr := m.bountyInput.Value()
 	if amountStr == "" {
 		m.err = fmt.Errorf("bounty amount cannot be empty")
@@ -61,7 +68,7 @@ func (m model) handleFundBountySubmit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	task := selectedItem.(taskItem).Task
-	
+
 	if m.currentProject == nil {
 		m.err = fmt.Errorf("internal error: no project context for bounty funding")
 		return m, nil
@@ -103,7 +110,7 @@ func (m model) viewFundBountyFormView() string {
 	b.WriteString("\n")
 
 	b.WriteString(formHelpStyle.Render("\nEnter: submit • Ctrl+S: submit • Esc: cancel"))
-	
+
 	if m.err != nil {
 		b.WriteString("\n")
 		b.WriteString(formErrorStyle.Render(fmt.Sprintf("Submission Error: %v", m.err)))

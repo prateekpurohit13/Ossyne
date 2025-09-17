@@ -103,17 +103,25 @@ func (m model) updateTasksView(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filterInput.SetValue("")
 				m.tasksList.FilterInput.SetValue("")
 				return m, nil
+			} else {
+				m.state = viewLanding
+				m.status = statusMessageStyle("Returned to landing page.")
+				return m, nil
 			}
 
 		case "c":
+			if m.loggedInUser == nil {
+				m.status = statusMessageStyle("You must be logged in to claim a task.")
+				m.state = viewAuth
+				return m, nil
+			}
 			selectedItem := m.tasksList.SelectedItem()
 			if selectedItem != nil {
 				task := selectedItem.(taskItem).Task
 				if task.Status == models.TaskStatusOpen {
 					m.loading = true
 					m.status = statusMessageStyle(fmt.Sprintf("Claiming task %d...", task.ID))
-					const userID = 2
-					return m, m.apiClient.claimTaskCmd(task.ID, userID)
+					return m, m.apiClient.claimTaskCmd(task.ID, m.loggedInUser.ID)
 				} else {
 					m.status = statusMessageStyle(fmt.Sprintf("Cannot claim task %d (Status: %s)", task.ID, strings.ToTitle(task.Status)))
 				}
@@ -123,6 +131,11 @@ func (m model) updateTasksView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "s":
+			if m.loggedInUser == nil {
+				m.status = statusMessageStyle("You must be logged in to submit contributions.")
+				m.state = viewAuth
+				return m, nil
+			}
 			selectedItem := m.tasksList.SelectedItem()
 			if selectedItem != nil {
 				task := selectedItem.(taskItem).Task
@@ -145,8 +158,7 @@ func (m model) updateTasksView(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = viewProjects
 				m.loading = true
 				m.status = statusMessageStyle("Loading projects...")
-				const maintainerID = 1
-				return m, m.apiClient.fetchUserProjectsCmd(maintainerID)
+				return m, m.apiClient.fetchUserProjectsCmd(1)
 			}
 			return m, nil
 
@@ -214,7 +226,11 @@ func (m model) viewTasksView() string {
 		BorderForeground(pink).
 		Padding(1).
 		Render(taskDetails)
-	helpText := "↑/k up • ↓/j down • / filter • c claim • s submit • p projects • r refresh • q quit"
+	authStatus := ""
+	if m.loggedInUser == nil {
+		authStatus = " (login required)"
+	}
+	helpText := fmt.Sprintf("↑/k up • ↓/j down • / filter • c claim%s • s submit%s • p projects • r refresh • esc back", authStatus, authStatus)
 	ui := lipgloss.JoinVertical(
 		lipgloss.Top,
 		header,

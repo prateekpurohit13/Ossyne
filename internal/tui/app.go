@@ -60,6 +60,7 @@ func InitModel() model {
 		input := textinput.New()
 		input.CharLimit = 250
 		input.Prompt = ""
+		input.Width = 50
 		input.Cursor.Style = lipgloss.NewStyle().Foreground(blue)
 		input.TextStyle = formValueStyle
 		input.PromptStyle = lipgloss.NewStyle().Foreground(blue)
@@ -67,17 +68,17 @@ func InitModel() model {
 
 		switch i {
 		case 0:
-			input.Placeholder = "Title"
+			input.Placeholder = "Enter a clear, concise task title"
 			input.CharLimit = 100
 		case 1:
-			input.Placeholder = "Description"
+			input.Placeholder = "Provide detailed task requirements and expectations"
 			input.CharLimit = 500
 		case 2:
-			input.Placeholder = "Difficulty (easy, medium, hard)"
+			input.Placeholder = "easy"
 			input.CharLimit = 10
 			input.SetValue("easy")
 		case 3:
-			input.Placeholder = "Estimated Hours (e.g., 8)"
+			input.Placeholder = "8"
 			input.CharLimit = 5
 			input.Validate = func(s string) error {
 				if s == "" {
@@ -90,7 +91,7 @@ func InitModel() model {
 				return nil
 			}
 		case 4:
-			input.Placeholder = "Tags (JSON: [\"go\",\"cli\"])"
+			input.Placeholder = "[\"go\", \"cli\", \"backend\"]"
 			input.CharLimit = 200
 			input.Validate = func(s string) error {
 				if s == "" {
@@ -100,7 +101,7 @@ func InitModel() model {
 				return json.Unmarshal([]byte(s), &dummy)
 			}
 		case 5:
-			input.Placeholder = "Skills Required (JSON: [\"sql\",\"testing\"])"
+			input.Placeholder = "[\"sql\", \"testing\", \"api-design\"]"
 			input.CharLimit = 200
 			input.Validate = func(s string) error {
 				if s == "" {
@@ -110,7 +111,7 @@ func InitModel() model {
 				return json.Unmarshal([]byte(s), &dummy)
 			}
 		case 6:
-			input.Placeholder = "Bounty Amount (e.g., 50.00)"
+			input.Placeholder = "50.00"
 			input.CharLimit = 10
 			input.Validate = func(s string) error {
 				if s == "" {
@@ -137,7 +138,7 @@ func InitModel() model {
 	tasksList.Styles.HelpStyle = lipgloss.NewStyle().PaddingLeft(4).Foreground(lipgloss.Color("241"))
 
 	projectsList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
-	projectsList.Title = "My Projects"
+	projectsList.Title = "Projects"
 	projectsList.SetShowStatusBar(false)
 	projectsList.SetFilteringEnabled(true)
 	projectsList.Styles.Title = titleStyle
@@ -157,18 +158,19 @@ func InitModel() model {
 	projectTasksList.Styles.HelpStyle = lipgloss.NewStyle().PaddingLeft(4).Foreground(lipgloss.Color("241"))
 
 	return model{
-		state:            viewTasks,
-		tasksList:        tasksList,
-		projectsList:     projectsList,
-		projectTasksList: projectTasksList,
-		spinner:          s,
-		status:           "Initializing...",
-		apiClient:        NewAPIClient("http://localhost:8080"),
-		loading:          true,
-		filterInput:      filterInput,
-		submitInput:      submitInput,
-		taskFormInputs:   taskFormInputs,
-		taskFormFocused:  0,
-		bountyInput:      bountyInput,
+		state:             viewLanding,
+		tasksList:         tasksList,
+		projectsList:      projectsList,
+		projectTasksList:  projectTasksList,
+		spinner:           s,
+		status:            "Welcome to OSSYNE!",
+		apiClient:         NewAPIClient("http://localhost:8080"),
+		loading:           false,
+		filterInput:       filterInput,
+		submitInput:       submitInput,
+		taskFormInputs:    taskFormInputs,
+		taskFormFocused:   0,
+		bountyInput:       bountyInput,
+		createProjectForm: newCreateProjectFormModel(),
 	}
 }

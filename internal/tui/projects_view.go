@@ -5,7 +5,6 @@ import (
 	"ossyne/internal/models"
 	"strings"
 	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -49,34 +48,17 @@ func (m model) updateProjectsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "esc", "t":
-			m.state = viewTasks
+		case "esc", "b":
+			m.state = viewLanding
 			m.projectsList.FilterInput.Blur()
 			m.projectsList.FilterInput.SetValue("")
-			m.filterInput.Focus()
-			m.status = statusMessageStyle("Returned to tasks view.")
-			return m, m.apiClient.fetchTasksCmd()
+			m.status = statusMessageStyle("Returned to landing page.")
+			return m, nil
 		case "r":
 			m.loading = true
 			m.status = statusMessageStyle("Refreshing projects...")
 			const maintainerID = 1
 			return m, m.apiClient.fetchUserProjectsCmd(maintainerID)
-		case "n":
-			if m.currentProject != nil {
-				m.state = viewCreateTask
-				m.err = nil
-				for i := 0; i < len(m.taskFormInputs); i++ {
-					m.taskFormInputs[i].SetValue("")
-					m.taskFormInputs[i].Blur()
-				}
-				m.taskFormFocused = 0
-				m.taskFormInputs[m.taskFormFocused].Focus()
-				m.status = statusMessageStyle(fmt.Sprintf("Creating task for project '%s'", m.currentProject.Title))
-				return m, textinput.Blink
-			} else {
-				m.status = statusMessageStyle("Select a project first to create a task.")
-			}
-			return m, nil
 		}
 	}
 
@@ -102,7 +84,7 @@ func (m model) viewProjectsView() string {
 		spinnerView = lipgloss.NewStyle().Foreground(red).Render(m.err.Error())
 	}
 
-	header := titleStyle.Render(fmt.Sprintf(" OSM TUI - My Projects (%s)", spinnerView))
+	header := titleStyle.Render(fmt.Sprintf(" Browse Public Projects (%s)", spinnerView))
 	panelWidth := (m.width-appStyle.GetHorizontalFrameSize())/2 - 1
 	leftPanel := lipgloss.NewStyle().
 		Width(panelWidth).
@@ -129,7 +111,7 @@ func (m model) viewProjectsView() string {
 		BorderForeground(yellow).
 		Padding(1).
 		Render(projectDetails)
-	helpText := "↑/k up • ↓/j down • n new task • r refresh • esc/q back to tasks"
+	helpText := "↑/k up • ↓/j down • enter view tasks • r refresh • esc back to landing"
 	ui := lipgloss.JoinVertical(
 		lipgloss.Top,
 		header,

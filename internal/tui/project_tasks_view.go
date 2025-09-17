@@ -35,11 +35,15 @@ func (m model) updateProjectTasksView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "esc", "p":
-			m.state = viewProjects
+			m.state = m.previousView
+			if m.previousView == viewManageProjects {
+				m.status = statusMessageStyle(fmt.Sprintf("Returned to project management for '%s'.", m.currentProject.Title))
+			} else {
+				m.status = statusMessageStyle(fmt.Sprintf("Returned to browse projects for '%s'.", m.currentProject.Title))
+			}
 			m.projectTasksList.FilterInput.Blur()
 			m.projectTasksList.FilterInput.SetValue("")
 			m.projectsList.Select(m.projectsList.Index())
-			m.status = statusMessageStyle(fmt.Sprintf("Returned to projects view for '%s'.", m.currentProject.Title))
 			return m, nil
 		case "r":
 			m.loading = true
@@ -51,20 +55,69 @@ func (m model) updateProjectTasksView(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = statusMessageStyle("No project selected to refresh tasks.")
 				return m, nil
 			}
-		case "f":
+		case "c": // Claim task (only for authenticated users)
+			if m.loggedInUser == nil {
+				m.status = statusMessageStyle("Please login first to claim tasks.")
+				m.state = viewAuth
+				return m, nil
+			}
 			selectedItem := m.projectTasksList.SelectedItem()
 			if selectedItem != nil {
 				task := selectedItem.(taskItem).Task
-				if task.Status == models.TaskStatusOpen || task.Status == models.TaskStatusClaimed {
-					m.state = viewFundBountyForm
-					m.err = nil
-					m.bountyInput.SetValue("")
-					m.bountyInput.Focus()
-					m.status = statusMessageStyle(fmt.Sprintf("Fund bounty for task '%s'", task.Title))
+				if task.Status == models.TaskStatusOpen {
+					m.loading = true
+					m.status = statusMessageStyle(fmt.Sprintf("Claiming task %d...", task.ID))
+					return m, m.apiClient.claimTaskCmd(task.ID, m.loggedInUser.ID)
+				} else {
+					m.status = statusMessageStyle(fmt.Sprintf("Cannot claim task %d (Status: %s)", task.ID, strings.ToTitle(task.Status)))
+				}
+			} else {
+				m.status = statusMessageStyle("No task selected to claim")
+			}
+			return m, nil
+
+		case "s": // Submit contribution (only for authenticated users)
+			if m.loggedInUser == nil {
+				m.status = statusMessageStyle("Please login first to submit contributions.")
+				m.state = viewAuth
+				return m, nil
+			}
+			selectedItem := m.projectTasksList.SelectedItem()
+			if selectedItem != nil {
+				task := selectedItem.(taskItem).Task
+				if task.Status == models.TaskStatusClaimed || task.Status == models.TaskStatusInProgress {
+					m.state = viewSubmit
+					m.submitInput.Focus()
+					m.submitInput.SetValue("")
+					m.status = statusMessageStyle(fmt.Sprintf("Enter PR URL for task '%s'", task.Title))
 					return m, textinput.Blink
 				} else {
-					m.status = statusMessageStyle(fmt.Sprintf("Cannot fund bounty for task %d (Status: %s)", task.ID, strings.ToTitle(task.Status)))
+					m.status = statusMessageStyle(fmt.Sprintf("Cannot submit for task %d (Status: %s)", task.ID, strings.ToTitle(task.Status)))
 				}
+			} else {
+				m.status = statusMessageStyle("No task selected to submit")
+			}
+			return m, nil
+
+		case "f": // Fund bounty (only available for owned projects)
+			if m.loggedInUser == nil {
+				m.status = statusMessageStyle("Please login first to fund bounties.")
+				m.state = viewAuth
+				return m, nil
+			}
+			if m.currentProject == nil || m.currentProject.OwnerID != m.loggedInUser.ID {
+				m.status = statusMessageStyle("You can only fund bounties for your own projects.")
+				return m, nil
+			}
+			selectedItem := m.projectTasksList.SelectedItem()
+			if selectedItem != nil {
+				task := selectedItem.(taskItem).Task
+				m.currentTask = &task
+				m.state = viewFundBountyForm
+				m.bountyInput.Focus()
+				m.bountyInput.SetValue("")
+				m.status = statusMessageStyle(fmt.Sprintf("Enter bounty amount for task '%s'", task.Title))
+				return m, textinput.Blink
 			} else {
 				m.status = statusMessageStyle("Select a task first to fund its bounty.")
 			}
@@ -103,7 +156,7 @@ func (m model) viewProjectTasksView() string {
 		projectID = fmt.Sprintf("%d", m.currentProject.ID)
 	}
 
-	header := titleStyle.Render(fmt.Sprintf(" OSM TUI - Tasks for Project: %s (ID: %s) (%s)", projectTitle, projectID, spinnerView))
+	header := titleStyle.Render(fmt.Sprintf(" Project Tasks: %s (ID: %s) (%s)", projectTitle, projectID, spinnerView))
 	panelWidth := (m.width-appStyle.GetHorizontalFrameSize())/2 - 1
 	leftPanel := lipgloss.NewStyle().
 		Width(panelWidth).
@@ -124,7 +177,14 @@ func (m model) viewProjectTasksView() string {
 		Padding(1).
 		Render(taskDetails)
 
-	helpText := "↑/k up • ↓/j down • f fund bounty • r refresh • esc/p back to projects • q quit"
+	authStatus := ""
+	fundStatus := ""
+	if m.loggedInUser == nil {
+		authStatus = " (login required for claim/submit/fund)"
+	} else if m.currentProject != nil && m.currentProject.OwnerID == m.loggedInUser.ID {
+		fundStatus = " • f fund bounty"
+	}
+	helpText := fmt.Sprintf("↑/k up • ↓/j down • c claim • s submit%s%s • r refresh • esc back to projects", fundStatus, authStatus)
 	ui := lipgloss.JoinVertical(
 		lipgloss.Top,
 		header,

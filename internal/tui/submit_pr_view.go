@@ -19,9 +19,12 @@ func (m model) updateSubmitView(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.apiClient.submitContributionCmd(m.currentTask.ID, userID, prURL)
 			}
 		case tea.KeyEsc:
-			m.state = viewTasks
+			if m.currentProject != nil {
+				m.state = viewProjectTasks
+			} else {
+				m.state = viewTasks
+			}
 			m.submitInput.Blur()
-			m.filterInput.Focus()
 			m.status = statusMessageStyle("Submission cancelled.")
 			return m, nil
 		}
