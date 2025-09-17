@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,27 +18,35 @@ func NewUserCmd() *cobra.Command {
 		Long:  `The user command lets you create, view, and manage users.`,
 	}
 
+	// Development-only command for testing
 	createCmd := &cobra.Command{
 		Use:   "create",
-		Short: "Create a new user",
-		Long:  `Create a new user in the OSM marketplace.`,
+		Short: "Create a test user (development only)",
+		Long:  `Create a test user for development and testing purposes. This bypasses OAuth authentication.`,
 		Run: func(cmd *cobra.Command, args []string) {
 			username, _ := cmd.Flags().GetString("username")
 			email, _ := cmd.Flags().GetString("email")
+			githubID, _ := cmd.Flags().GetString("github-id")
 
 			if username == "" || email == "" {
 				fmt.Println("Error: --username and --email flags are required.")
 				return
 			}
 
-			createUser(username, email)
+			if githubID == "" {
+				githubID = "0"
+			}
+
+			createTestUser(username, email, githubID)
 		},
 	}
-	createCmd.Flags().StringP("username", "u", "", "Username for the new user")
-	createCmd.Flags().StringP("email", "e", "", "Email for the new user")
+	createCmd.Flags().StringP("username", "u", "", "Username for the test user")
+	createCmd.Flags().StringP("email", "e", "", "Email for the test user")
+	createCmd.Flags().StringP("github-id", "g", "", "GitHub ID (optional, for testing)")
 	createCmd.MarkFlagRequired("username")
 	createCmd.MarkFlagRequired("email")
 	userCmd.AddCommand(createCmd)
+
 	viewCmd := &cobra.Command{
 		Use:   "view [user-id]",
 		Short: "View a user's profile, ratings, and skills",
@@ -58,38 +65,6 @@ func NewUserCmd() *cobra.Command {
 	userCmd.AddCommand(viewCmd)
 
 	return userCmd
-}
-
-func createUser(username, email string) {
-	const serverURL = "http://localhost:8080/users"
-
-	payload, err := json.Marshal(map[string]string{
-		"username": username,
-		"email":    email,
-	})
-	if err != nil {
-		fmt.Printf("Error creating request payload: %v\n", err)
-		return
-	}
-
-	resp, err := http.Post(serverURL, "application/json", bytes.NewBuffer(payload))
-	if err != nil {
-		fmt.Printf("Error: Could not connect to the OSM server at %s. Is it running?\n", serverURL)
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Error reading server response: %v\n", err)
-		return
-	}
-	if resp.StatusCode == http.StatusCreated {
-		fmt.Println("User created successfully!")
-	} else {
-		fmt.Printf("Error: Failed to create user (Status: %s)\n", resp.Status)
-		fmt.Printf("Response: %s\n", string(body))
-	}
 }
 
 func viewUser(userID uint) {
@@ -156,5 +131,49 @@ func viewUser(userID uint) {
 		}
 	} else {
 		fmt.Println("\nNo skills listed for this user.")
+	}
+}
+
+func createTestUser(username, email, githubID string) {
+	const serverURL = "http://localhost:8080/dev/users/create"
+
+	payload := map[string]interface{}{
+		"username": username,
+		"email":    email,
+	}
+	if githubID != "0" && githubID != "" {
+		payload["github_id"] = githubID
+	}
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Printf("Error creating request payload: %v\n", err)
+		return
+	}
+	resp, err := http.Post(serverURL, "application/json", strings.NewReader(string(jsonData)))
+	if err != nil {
+		fmt.Printf("Error creating test user: %v\nNote: Make sure the server is running and has a dev endpoint for user creation\n", err)
+		return
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("Error reading response: %v\n", err)
+		return
+	}
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		fmt.Printf("Error creating test user: %s\n", string(body))
+		fmt.Println("Note: You may need to add a development endpoint to the server for user creation")
+		return
+	}
+	var response map[string]interface{}
+	if err := json.Unmarshal(body, &response); err == nil {
+		if userID, ok := response["id"]; ok {
+			fmt.Printf("Successfully created test user '%s' with ID: %v\n", username, userID)
+		} else {
+			fmt.Printf("Successfully created test user '%s'\n", username)
+		}
+	} else {
+		fmt.Printf("Successfully created test user '%s'\n", username)
 	}
 }

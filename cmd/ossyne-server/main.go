@@ -20,24 +20,19 @@ type ContributionHandler struct {
 	Service *services.ContributionService
 }
 
-func (h *UserHandler) createUser(c echo.Context) error {
-	user := new(models.User)
-	if err := c.Bind(user); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
-	}
-	result := db.DB.Create(&user)
-	if result.Error != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": result.Error.Error()})
-	}
-
-	return c.JSON(http.StatusCreated, user)
-}
-
 func (h *UserHandler) GetUser(c echo.Context) error {
 	id := c.Param("id")
 	var user models.User
 	if err := db.DB.First(&user, id).Error; err != nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "User not found"})
+	}
+	return c.JSON(http.StatusOK, user)
+}
+
+func (h *UserHandler) GetMe(c echo.Context) error {
+	user, ok := c.Get("user").(*models.User)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "User not found in context"})
 	}
 	return c.JSON(http.StatusOK, user)
 }
@@ -60,8 +55,10 @@ func main() {
 
 	paymentService := services.NewPaymentService()
 	contributionService := services.NewContributionService(paymentService)
+	contributionService.PaymentService = paymentService
+	authService := services.NewAuthService(cfg)
 
-	userHandler := &UserHandler{}
+	userHandler := &api.UserHandler{}
 	projectHandler := &api.ProjectHandler{}
 	taskHandler := &api.TaskHandler{}
 	claimHandler := &api.ClaimHandler{}
@@ -71,27 +68,43 @@ func main() {
 	userSkillHandler := &api.UserSkillHandler{}
 	paymentHandler := api.NewPaymentHandler()
 
-	e.POST("/users", userHandler.createUser)
-	e.GET("/users/:id", userHandler.GetUser)
+	e.GET("/auth/github", echo.WrapHandler(http.HandlerFunc(authService.HandleGitHubLogin)))
+	e.GET("/auth/github/callback", echo.WrapHandler(http.HandlerFunc(authService.HandleGitHubCallback)))
+	e.GET("/tasks", taskHandler.ListTasks)//keeping this public for browsing
 	e.GET("/projects", projectHandler.ListProjects)
+	//Authenticated Routes
+	apiGroup := e.Group("/api")
+	apiGroup.Use(api.AuthMiddleware)
+	apiGroup.POST("/projects", projectHandler.CreateProject)
+	apiGroup.POST("/tasks", taskHandler.CreateTask)
+	apiGroup.POST("/claims", claimHandler.CreateClaim)
+	apiGroup.POST("/contributions", contributionHandler.CreateContribution)
+	apiGroup.PUT("/contributions/:id/accept", contributionHandler.AcceptContribution)
+	apiGroup.PUT("/contributions/:id/reject", contributionHandler.RejectContribution)
+	apiGroup.POST("/mentor/endorse", mentorHandler.EndorseUser)
+	apiGroup.POST("/bounties/fund", paymentHandler.FundTaskBounty)
+	apiGroup.PUT("/bounties/refund/:id", paymentHandler.RefundTaskBounty)
+	apiGroup.GET("/users/me", userHandler.GetMe)
+	apiGroup.GET("/users/me/payments", paymentHandler.GetMyPayments)
+	apiGroup.GET("/users/:user_id/payments", paymentHandler.GetUserPayments)
+	adminGroup := apiGroup.Group("/admin")
+	adminGroup.POST("/skills", skillHandler.CreateSkill)
+	adminGroup.POST("/users/skills", userSkillHandler.AddUserSkill)
+
+	//Public routes
+	e.GET("/users/:id", userHandler.GetUser)
 	e.GET("/users/:id/projects", projectHandler.ListUserProjects)
-	e.POST("/projects", projectHandler.CreateProject)
-	e.GET("/tasks", taskHandler.ListTasks)
-	e.POST("/tasks", taskHandler.CreateTask)
-	e.POST("/claims", claimHandler.CreateClaim)
-	e.GET("/claims", claimHandler.ListClaims)
-	e.POST("/contributions", contributionHandler.CreateContribution)
-	e.GET("/contributions", contributionHandler.ListContributions)
-	e.PUT("/contributions/:id/accept", contributionHandler.AcceptContribution)
-	e.PUT("/contributions/:id/reject", contributionHandler.RejectContribution)
-	e.POST("/mentor/endorse", mentorHandler.EndorseUser)
-	e.POST("/skills", skillHandler.CreateSkill)
 	e.GET("/skills", skillHandler.ListSkills)
-	e.POST("/users/skills", userSkillHandler.AddUserSkill)
 	e.GET("/users/:user_id/skills", userSkillHandler.ListUserSkills)
-	e.POST("/bounties/fund", paymentHandler.FundTaskBounty)
-	e.PUT("/bounties/refund/:id", paymentHandler.RefundTaskBounty)
-	e.GET("/users/:user_id/payments", paymentHandler.GetUserPayments)
+	e.GET("/claims", claimHandler.ListClaims)
+	e.GET("/contributions", contributionHandler.ListContributions)
+
+	//Development-only routes
+	devGroup := e.Group("/dev")
+	devGroup.POST("/users/create", userHandler.CreateUser)
+	devGroup.POST("/claims", claimHandler.CreateClaimDev)
+	devGroup.POST("/contributions", contributionHandler.CreateContributionDev)
+	devGroup.GET("/users/:user_id/payments", paymentHandler.GetUserPayments)
 
 	if err := e.Start(":" + cfg.ServerPort); err != nil {
 		e.Logger.Fatal(err)

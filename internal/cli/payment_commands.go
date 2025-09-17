@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,29 +24,63 @@ func NewPaymentCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			taskIDStr := args[0]
-			funderUserIDStr, _ := cmd.Flags().GetString("funder-user-id")
 			amountStr, _ := cmd.Flags().GetString("amount")
 			currency, _ := cmd.Flags().GetString("currency")
 
-			if funderUserIDStr == "" || amountStr == "" {
-				fmt.Println("Error: --funder-user-id and --amount flags are required.")
+			if amountStr == "" {
+				fmt.Println("Error: --amount flag is required.")
 				return
 			}
 
 			taskID, err := strconv.ParseUint(taskIDStr, 10, 64)
-			if err != nil { fmt.Printf("Error: Invalid task ID: %v\n", err); return }
-			funderUserID, err := strconv.ParseUint(funderUserIDStr, 10, 64)
-			if err != nil { fmt.Printf("Error: Invalid funder-user-id: %v\n", err); return }
+			if err != nil {
+				fmt.Printf("Error: Invalid task ID: %v\n", err)
+				return
+			}
 			amount, err := strconv.ParseFloat(amountStr, 64)
-			if err != nil { fmt.Printf("Error: Invalid amount: %v\n", err); return }
+			if err != nil {
+				fmt.Printf("Error: Invalid amount: %v\n", err)
+				return
+			}
 
-			fundTaskBounty(uint(taskID), uint(funderUserID), amount, currency)
+			apiClient := NewAPIClient()
+			payloadMap := map[string]interface{}{
+				"task_id":  uint(taskID),
+				"amount":   amount,
+				"currency": currency,
+			}
+
+			resp, err := apiClient.DoAuthenticatedRequest(http.MethodPost, "/bounties/fund", payloadMap)
+			if err != nil {
+				fmt.Printf("Error funding task bounty: %v\n", err)
+				return
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Printf("Error reading response: %v\n", err)
+				return
+			}
+
+			if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+				fmt.Printf("Error funding task bounty: %s\n", string(body))
+				return
+			}
+
+			var response map[string]interface{}
+			if err := json.Unmarshal(body, &response); err == nil {
+				if msg, ok := response["message"].(string); ok {
+					fmt.Println(msg)
+					return
+				}
+			}
+
+			fmt.Printf("Successfully funded task %d with %.2f %s\n", taskID, amount, currency)
 		},
 	}
-	fundCmd.Flags().StringP("funder-user-id", "u", "", "ID of the user funding the bounty (e.g., project owner or sponsor)")
 	fundCmd.Flags().StringP("amount", "a", "", "Amount of the bounty")
 	fundCmd.Flags().StringP("currency", "c", "USD", "Currency of the bounty (default: USD)")
-	fundCmd.MarkFlagRequired("funder-user-id")
 	fundCmd.MarkFlagRequired("amount")
 	walletCmd.AddCommand(fundCmd)
 
@@ -61,145 +94,85 @@ func NewPaymentCmd() *cobra.Command {
 			reason, _ := cmd.Flags().GetString("reason")
 
 			taskID, err := strconv.ParseUint(taskIDStr, 10, 64)
-			if err != nil { fmt.Printf("Error: Invalid task ID: %v\n", err); return }
+			if err != nil {
+				fmt.Printf("Error: Invalid task ID: %v\n", err)
+				return
+			}
 
-			refundTaskBounty(uint(taskID), reason)
+			apiClient := NewAPIClient()
+			payloadMap := map[string]interface{}{
+				"reason": reason,
+			}
+
+			resp, err := apiClient.DoAuthenticatedRequest(http.MethodPut, fmt.Sprintf("/bounties/refund/%d", taskID), payloadMap)
+			if err != nil {
+				fmt.Printf("Error refunding task bounty: %v\n", err)
+				return
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Printf("Error reading response: %v\n", err)
+				return
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				fmt.Printf("Error refunding task bounty: %s\n", string(body))
+				return
+			}
+
+			fmt.Printf("Successfully refunded bounty for task %d\n", taskID)
 		},
 	}
 	refundCmd.Flags().StringP("reason", "r", "No completion or agreement.", "Reason for refunding the bounty")
 	walletCmd.AddCommand(refundCmd)
 
 	historyCmd := &cobra.Command{
-		Use:   "history <user-id>",
-		Short: "View payment history for a user",
-		Long:  `Shows a list of all payment-related transactions for a specific user.`,
-		Args:  cobra.ExactArgs(1),
+		Use:   "history",
+		Short: "View your payment history",
+		Long:  `Shows a list of all payment-related transactions for the authenticated user.`,
+		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
-			userIDStr := args[0]
-			userID, err := strconv.ParseUint(userIDStr, 10, 64)
-			if err != nil { fmt.Printf("Error: Invalid user ID: %v\n", err); return }
-			viewPaymentHistory(uint(userID))
+			apiClient := NewAPIClient()
+
+			resp, err := apiClient.DoAuthenticatedRequest(http.MethodGet, "/users/me/payments", nil)
+			if err != nil {
+				fmt.Printf("Error fetching payment history: %v\n", err)
+				return
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Printf("Error reading response: %v\n", err)
+				return
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				fmt.Printf("Error fetching payment history: %s\n", string(body))
+				return
+			}
+
+			var payments []models.Payment
+			if err := json.Unmarshal(body, &payments); err != nil {
+				fmt.Printf("Error parsing payment history: %v\n", err)
+				return
+			}
+
+			if len(payments) == 0 {
+				fmt.Println("No payment history found.")
+				return
+			}
+
+			fmt.Println("--- Payment History ---")
+			for _, p := range payments {
+				fmt.Printf("ID: %d, Amount: %.2f %s, Status: %s, Type: %s, Date: %s\n",
+					p.ID, p.Amount, p.Currency, p.Status, p.Type, p.PaymentDate.Format("2006-01-02"))
+			}
 		},
 	}
 	walletCmd.AddCommand(historyCmd)
 
 	return walletCmd
-}
-
-func fundTaskBounty(taskID, funderUserID uint, amount float64, currency string) {
-	const serverURL = "http://localhost:8080/bounties/fund"
-
-	payload, err := json.Marshal(map[string]interface{}{
-		"task_id":        taskID,
-		"funder_user_id": funderUserID,
-		"amount":         amount,
-		"currency":       currency,
-	})
-	if err != nil {
-		fmt.Printf("Error creating request payload: %v\n", err)
-		return
-	}
-	resp, err := http.Post(serverURL, "application/json", bytes.NewBuffer(payload))
-	if err != nil {
-		fmt.Printf("Error: Could not connect to the OSM server at %s. Is it running?\n", serverURL)
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Error reading server response: %v\n", err)
-		return
-	}
-	if resp.StatusCode == http.StatusOK {
-		fmt.Println("Task bounty funded and escrowed successfully!")
-	} else {
-		fmt.Printf("Error: Failed to fund task bounty (Status: %s)\n", resp.Status)
-		fmt.Printf("Response: %s\n", string(body))
-	}
-}
-
-func refundTaskBounty(taskID uint, reason string) {
-	url := fmt.Sprintf("http://localhost:8080/bounties/refund/%d", taskID)
-
-	payload, err := json.Marshal(map[string]string{
-		"reason": reason,
-	})
-	if err != nil {
-		fmt.Printf("Error creating request payload: %v\n", err)
-		return
-	}
-
-	req, err := http.NewRequest(http.MethodPut, url, bytes.NewBuffer(payload))
-	if err != nil {
-		fmt.Printf("Error creating request: %v\n", err)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("Error: Could not connect to the OSM server at %s. Is it running?\n", url)
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Error reading server response: %v\n", err)
-		return
-	}
-
-	if resp.StatusCode == http.StatusOK {
-		fmt.Println("Task bounty refunded successfully!")
-	} else {
-		fmt.Printf("Error: Failed to refund task bounty (Status: %s)\n", resp.Status)
-		fmt.Printf("Response: %s\n", string(body))
-	}
-}
-
-func viewPaymentHistory(userID uint) {
-	url := fmt.Sprintf("http://localhost:8080/users/%d/payments", userID)
-
-	resp, err := http.Get(url)
-	if err != nil {
-		fmt.Printf("Error: Could not connect to the OSM server at %s. Is it running?\n", url)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("Error: Failed to retrieve payment history (Status: %s)\n", resp.Status)
-		body, _ := io.ReadAll(resp.Body)
-		fmt.Printf("Response: %s\n", string(body))
-		return
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Error reading server response: %v\n", err)
-		return
-	}
-
-	var payments []models.Payment
-	if err := json.Unmarshal(body, &payments); err != nil {
-		fmt.Printf("Error parsing server response: %v\n", err)
-		return
-	}
-
-	if len(payments) == 0 {
-		fmt.Printf("No payment history found for user ID %d.\n", userID)
-		return
-	}
-
-	fmt.Printf("--- Payment History for User ID %d ---\n", userID)
-	for _, p := range payments {
-		contribInfo := ""
-		if p.ContributionID != nil {
-			contribInfo = fmt.Sprintf(" (Contrib ID: %d)", *p.ContributionID)
-		}
-		fmt.Printf("ID: %d, Type: %s, Amount: %.2f %s, Status: %s, Date: %s%s\n",
-			p.ID, p.Type, p.Amount, p.Currency, p.Status, p.PaymentDate.Format("2006-01-02"), contribInfo)
-	}
 }

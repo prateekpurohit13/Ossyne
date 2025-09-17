@@ -7,7 +7,6 @@ import (
 	"ossyne/internal/models"
 	"ossyne/internal/services"
 	"strconv"
-
 	"github.com/labstack/echo/v4"
 	"gorm.io/gorm"
 )
@@ -27,6 +26,61 @@ func (h *UserHandler) CreateUser(c echo.Context) error {
 
 	return c.JSON(http.StatusCreated, user)
 }
+//Development-only handler for creating claims without authentication
+func (h *ClaimHandler) CreateClaimDev(c echo.Context) error {
+	var req struct {
+		TaskID uint `json:"task_id"`
+		UserID uint `json:"user_id"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
+	}
+
+	if req.TaskID == 0 || req.UserID == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Task ID and User ID are required for dev mode"})
+	}
+
+	claim := &models.Claim{
+		TaskID: req.TaskID,
+		UserID: req.UserID,
+	}
+
+	tx := db.DB.Begin()
+	if tx.Error != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to start transaction"})
+	}
+
+	var task models.Task
+	if err := tx.First(&task, claim.TaskID).Error; err != nil {
+		tx.Rollback()
+		if err == gorm.ErrRecordNotFound {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Task not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch task"})
+	}
+
+	if task.Status != "open" {
+		tx.Rollback()
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Task is not open for claiming"})
+	}
+
+	if err := tx.Create(claim).Error; err != nil {
+		tx.Rollback()
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create claim"})
+	}
+
+	task.Status = "claimed"
+	if err := tx.Save(&task).Error; err != nil {
+		tx.Rollback()
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update task status"})
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to commit transaction"})
+	}
+
+	return c.JSON(http.StatusCreated, claim)
+}
 
 type ProjectHandler struct{}
 
@@ -36,14 +90,12 @@ func (h *ProjectHandler) CreateProject(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
 	}
 
-	if project.OwnerID == 0 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Owner ID is required"})
+	// Get user from context using the correct context key
+	user, ok := c.Request().Context().Value(userContextKey).(*models.User)
+	if !ok || user == nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "User not authenticated"})
 	}
-
-	var owner models.User
-	if err := db.DB.First(&owner, project.OwnerID).Error; err != nil {
-		return c.JSON(http.StatusNotFound, map[string]string{"error": fmt.Sprintf("Owner with ID %d not found", project.OwnerID)})
-	}
+	project.OwnerID = user.ID
 
 	result := db.DB.Create(&project)
 	if result.Error != nil {
@@ -121,14 +173,26 @@ func (h *TaskHandler) ListTasks(c echo.Context) error {
 type ClaimHandler struct{}
 
 func (h *ClaimHandler) CreateClaim(c echo.Context) error {
-	claim := new(models.Claim)
-	if err := c.Bind(claim); err != nil {
+	var req struct {
+		TaskID uint `json:"task_id"`
+	}
+	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
 	}
-
-	if claim.TaskID == 0 || claim.UserID == 0 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Task ID and User ID are required"})
+	user, ok := c.Request().Context().Value(userContextKey).(*models.User)
+	if !ok || user == nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "User not authenticated"})
 	}
+
+	claim := &models.Claim{
+		TaskID: req.TaskID,
+		UserID: user.ID,
+	}
+
+	if claim.TaskID == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Task ID is required"})
+	}
+
 	tx := db.DB.Begin()
 	if tx.Error != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to start transaction"})
@@ -142,12 +206,6 @@ func (h *ClaimHandler) CreateClaim(c echo.Context) error {
 	if task.Status != "open" {
 		tx.Rollback()
 		return c.JSON(http.StatusConflict, map[string]string{"error": fmt.Sprintf("Task '%s' is not open for claims (current status: %s)", task.Title, task.Status)})
-	}
-
-	var user models.User
-	if err := tx.First(&user, claim.UserID).Error; err != nil {
-		tx.Rollback()
-		return c.JSON(http.StatusNotFound, map[string]string{"error": fmt.Sprintf("User with ID %d not found", claim.UserID)})
 	}
 
 	var existingClaim models.Claim
@@ -201,22 +259,30 @@ func (h *ClaimHandler) ListClaims(c echo.Context) error {
 }
 
 type ContributionHandler struct {
-	Service *services.ContributionService // <--- ADD THIS LINE
+	Service *services.ContributionService
 }
 
 func (h *ContributionHandler) CreateContribution(c echo.Context) error {
-	contribution := new(models.Contribution)
-	if err := c.Bind(contribution); err != nil {
+	var req struct {
+		TaskID uint   `json:"task_id"`
+		PRURL  string `json:"pr_url"`
+	}
+	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
 	}
-
-	if contribution.TaskID == 0 || contribution.UserID == 0 || contribution.PRURL == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Task ID, User ID, and PR URL are required"})
+	user, ok := c.Request().Context().Value(userContextKey).(*models.User)
+	if !ok || user == nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "User not authenticated"})
 	}
 
-	var user models.User
-	if err := db.DB.First(&user, contribution.UserID).Error; err != nil {
-		return c.JSON(http.StatusNotFound, map[string]string{"error": fmt.Sprintf("User with ID %d not found", contribution.UserID)})
+	contribution := &models.Contribution{
+		TaskID: req.TaskID,
+		UserID: user.ID,
+		PRURL:  req.PRURL,
+	}
+
+	if contribution.TaskID == 0 || contribution.PRURL == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Task ID and PR URL are required"})
 	}
 
 	var task models.Task
@@ -231,6 +297,7 @@ func (h *ContributionHandler) CreateContribution(c echo.Context) error {
 	if err := db.DB.Where("task_id = ? AND user_id = ?", contribution.TaskID, contribution.UserID).First(&existingContribution).Error; err == nil {
 		return c.JSON(http.StatusConflict, map[string]string{"error": fmt.Sprintf("User %s has already submitted a contribution for task '%s'", user.Username, task.Title)})
 	}
+
 	tx := db.DB.Begin()
 	if tx.Error != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to start transaction"})
@@ -248,6 +315,59 @@ func (h *ContributionHandler) CreateContribution(c echo.Context) error {
 	tx.Commit()
 	return c.JSON(http.StatusCreated, contribution)
 }
+
+// Development-only handler for creating contributions without authentication
+func (h *ContributionHandler) CreateContributionDev(c echo.Context) error {
+	var req struct {
+		TaskID uint   `json:"task_id"`
+		UserID uint   `json:"user_id"`
+		PRURL  string `json:"pr_url"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
+	}
+
+	if req.TaskID == 0 || req.UserID == 0 || req.PRURL == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Task ID, User ID, and PR URL are required for dev mode"})
+	}
+
+	contribution := &models.Contribution{
+		TaskID: req.TaskID,
+		UserID: req.UserID,
+		PRURL:  req.PRURL,
+	}
+
+	var task models.Task
+	if err := db.DB.First(&task, contribution.TaskID).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": fmt.Sprintf("Task with ID %d not found", contribution.TaskID)})
+	}
+	if task.Status != "claimed" && task.Status != "in_progress" {
+		return c.JSON(http.StatusConflict, map[string]string{"error": fmt.Sprintf("Task '%s' is not in a state to accept contributions (current status: %s)", task.Title, task.Status)})
+	}
+
+	var existingContribution models.Contribution
+	if err := db.DB.Where("task_id = ? AND user_id = ?", contribution.TaskID, contribution.UserID).First(&existingContribution).Error; err == nil {
+		return c.JSON(http.StatusConflict, map[string]string{"error": fmt.Sprintf("User %d has already submitted a contribution for task '%s'", req.UserID, task.Title)})
+	}
+
+	tx := db.DB.Begin()
+	if tx.Error != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to start transaction"})
+	}
+
+	contribution.VerificationStatus = "unverified"
+	if err := tx.Create(&contribution).Error; err != nil {
+		tx.Rollback()
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to create contribution: %v", err)})
+	}
+	if err := tx.Model(&task).Update("status", "submitted").Error; err != nil {
+		tx.Rollback()
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to update task status: %v", err)})
+	}
+	tx.Commit()
+	return c.JSON(http.StatusCreated, contribution)
+}
+
 func (h *ContributionHandler) ListContributions(c echo.Context) error {
 	var contributions []models.Contribution
 	userIDStr := c.QueryParam("user_id")
@@ -432,21 +552,25 @@ func NewPaymentHandler() *PaymentHandler {
 
 func (h *PaymentHandler) FundTaskBounty(c echo.Context) error {
 	var req struct {
-		TaskID       uint    `json:"task_id"`
-		FunderUserID uint    `json:"funder_user_id"`
-		Amount       float64 `json:"amount"`
-		Currency     string  `json:"currency"`
+		TaskID   uint    `json:"task_id"`
+		Amount   float64 `json:"amount"`
+		Currency string  `json:"currency"`
 	}
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
 	}
-	if req.TaskID == 0 || req.FunderUserID == 0 || req.Amount <= 0 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Task ID, Funder User ID, and positive Amount are required"})
+	user, ok := c.Request().Context().Value(userContextKey).(*models.User)
+	if !ok || user == nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "User not authenticated"})
+	}
+
+	if req.TaskID == 0 || req.Amount <= 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Task ID and positive Amount are required"})
 	}
 	if req.Currency == "" {
 		req.Currency = "USD"
 	}
-	if err := h.Service.FundTaskBounty(req.TaskID, req.FunderUserID, req.Amount, req.Currency); err != nil {
+	if err := h.Service.FundTaskBounty(req.TaskID, user.ID, req.Amount, req.Currency); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to fund task bounty: %v", err)})
 	}
 
@@ -485,4 +609,25 @@ func (h *PaymentHandler) GetUserPayments(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to retrieve user payments: %v", err)})
 	}
 	return c.JSON(http.StatusOK, payments)
+}
+
+func (h *PaymentHandler) GetMyPayments(c echo.Context) error {
+	user, ok := c.Request().Context().Value(userContextKey).(*models.User)
+	if !ok || user == nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "User not authenticated"})
+	}
+
+	payments, err := h.Service.GetUserPayments(user.ID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to retrieve user payments: %v", err)})
+	}
+	return c.JSON(http.StatusOK, payments)
+}
+
+func (h *UserHandler) GetMe(c echo.Context) error {
+	user, ok := c.Request().Context().Value(userContextKey).(*models.User)
+	if !ok || user == nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "User not authenticated"})
+	}
+	return c.JSON(http.StatusOK, user)
 }

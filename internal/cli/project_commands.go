@@ -1,12 +1,10 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"ossyne/internal/models"
 	"github.com/spf13/cobra"
 )
@@ -24,41 +22,60 @@ func NewProjectCmd() *cobra.Command {
 		Long:  `Create a new open-source project in the OSM marketplace.`,
 		Run: func(cmd *cobra.Command, args []string) {
 			title, _ := cmd.Flags().GetString("title")
-			ownerIDStr, _ := cmd.Flags().GetString("owner-id")
 			repoURL, _ := cmd.Flags().GetString("repo-url")
 			shortDesc, _ := cmd.Flags().GetString("short-desc")
 			tagsStr, _ := cmd.Flags().GetString("tags")
 
-			if title == "" || ownerIDStr == "" {
-				fmt.Println("Error: --title and --owner-id flags are required.")
-				return
-			}
-
-			ownerID, err := strconv.ParseUint(ownerIDStr, 10, 64)
-			if err != nil {
-				fmt.Printf("Error: Invalid owner-id: %v\n", err)
+			if title == "" {
+				fmt.Println("Error: --title flag is required.")
 				return
 			}
 
 			var tags []string
 			if tagsStr != "" {
-				err = json.Unmarshal([]byte(tagsStr), &tags)
+				err := json.Unmarshal([]byte(tagsStr), &tags)
 				if err != nil {
 					fmt.Printf("Error: Invalid tags JSON: %v. Please use format `[\"tag1\",\"tag2\"]`\n", err)
 					return
 				}
 			}
 
-			createProject(title, uint(ownerID), repoURL, shortDesc, tags)
+			apiClient := NewAPIClient()
+			payloadMap := map[string]interface{}{
+				"title":      title,
+				"short_desc": shortDesc,
+				"repo_url":   repoURL,
+			}
+			if len(tags) > 0 {
+				payloadMap["tags"] = tags
+			}
+
+			resp, err := apiClient.DoAuthenticatedRequest(http.MethodPost, "/projects", payloadMap)
+			if err != nil {
+				fmt.Printf("Error creating project: %v\n", err)
+				return
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Printf("Error reading response: %v\n", err)
+				return
+			}
+
+			if resp.StatusCode != http.StatusCreated {
+				fmt.Printf("Error creating project: %s\n", string(body))
+				return
+			}
+
+			fmt.Println("Project created successfully!")
 		},
 	}
 	createCmd.Flags().StringP("title", "t", "", "Title of the project")
-	createCmd.Flags().StringP("owner-id", "o", "", "ID of the user who owns the project")
 	createCmd.Flags().StringP("repo-url", "r", "", "GitHub/GitLab repository URL (optional)")
 	createCmd.Flags().StringP("short-desc", "d", "", "Short description of the project (optional)")
 	createCmd.Flags().String("tags", "", "JSON array of tags, e.g., '[\"go\",\"cli\"]' (optional)")
 	createCmd.MarkFlagRequired("title")
-	createCmd.MarkFlagRequired("owner-id")
 	projectCmd.AddCommand(createCmd)
 
 	listCmd := &cobra.Command{
@@ -72,46 +89,6 @@ func NewProjectCmd() *cobra.Command {
 	projectCmd.AddCommand(listCmd)
 
 	return projectCmd
-}
-
-func createProject(title string, ownerID uint, repoURL, shortDesc string, tags []string) {
-	const serverURL = "http://localhost:8080/projects"
-
-	payloadMap := map[string]interface{}{
-		"title":     title,
-		"owner_id":  ownerID,
-		"short_desc": shortDesc,
-		"repo_url":  repoURL,
-	}
-	if len(tags) > 0 {
-		payloadMap["tags"] = tags
-	}
-
-	payload, err := json.Marshal(payloadMap)
-	if err != nil {
-		fmt.Printf("Error creating request payload: %v\n", err)
-		return
-	}
-
-	resp, err := http.Post(serverURL, "application/json", bytes.NewBuffer(payload))
-	if err != nil {
-		fmt.Printf("Error: Could not connect to the OSM server at %s. Is it running?\n", serverURL)
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Error reading server response: %v\n", err)
-		return
-	}
-
-	if resp.StatusCode == http.StatusCreated {
-		fmt.Println("Project created successfully!")
-	} else {
-		fmt.Printf("Error: Failed to create project (Status: %s)\n", resp.Status)
-		fmt.Printf("Response: %s\n", string(body))
-	}
 }
 
 func listProjects() {

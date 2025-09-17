@@ -1,14 +1,13 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"ossyne/internal/models"
 	"strconv"
 	"strings"
-	"ossyne/internal/models"
 	"github.com/spf13/cobra"
 )
 
@@ -74,7 +73,41 @@ func NewTaskCmd() *cobra.Command {
 				}
 			}
 
-			createTask(uint(projectID), title, description, difficulty, estimatedHours, tags, skillsRequired, bountyAmount)
+			apiClient := NewAPIClient()
+			payloadMap := map[string]interface{}{
+				"project_id":       uint(projectID),
+				"title":            title,
+				"description":      description,
+				"difficulty_level": difficulty,
+				"estimated_hours":  estimatedHours,
+				"bounty_amount":    bountyAmount,
+			}
+			if len(tags) > 0 {
+				payloadMap["tags"] = tags
+			}
+			if len(skillsRequired) > 0 {
+				payloadMap["skills_required"] = skillsRequired
+			}
+
+			resp, err := apiClient.DoAuthenticatedRequest(http.MethodPost, "/tasks", payloadMap)
+			if err != nil {
+				fmt.Printf("Error creating task: %v\n", err)
+				return
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Printf("Error reading response: %v\n", err)
+				return
+			}
+
+			if resp.StatusCode != http.StatusCreated {
+				fmt.Printf("Error creating task: %s\n", string(body))
+				return
+			}
+
+			fmt.Println("Task created successfully!")
 		},
 	}
 	createCmd.Flags().StringP("project-id", "p", "", "ID of the project this task belongs to")
@@ -110,43 +143,83 @@ func NewTaskCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			taskIDStr := args[0]
-			userIDStr, _ := cmd.Flags().GetString("user-id")
-
-			if userIDStr == "" {
-				fmt.Println("Error: --user-id flag is required to claim a task.")
-				return
-			}
+			devUserID, _ := cmd.Flags().GetString("dev-user-id")
 
 			taskID, err := strconv.ParseUint(taskIDStr, 10, 64)
 			if err != nil {
 				fmt.Printf("Error: Invalid task ID: %v\n", err)
 				return
 			}
-			userID, err := strconv.ParseUint(userIDStr, 10, 64)
-			if err != nil {
-				fmt.Printf("Error: Invalid user ID: %v\n", err)
+
+			payload := map[string]uint{"task_id": uint(taskID)}
+
+			// Development mode: bypass authentication if dev-user-id is provided
+			if devUserID != "" {
+				userID, err := strconv.ParseUint(devUserID, 10, 64)
+				if err != nil {
+					fmt.Printf("Error: Invalid dev-user-id: %v\n", err)
+					return
+				}
+				payload["user_id"] = uint(userID)
+
+				// Use direct HTTP request for development
+				jsonData, _ := json.Marshal(payload)
+				resp, err := http.Post("http://localhost:8080/dev/claims", "application/json", strings.NewReader(string(jsonData)))
+				if err != nil {
+					fmt.Printf("Error claiming task: %v\n", err)
+					return
+				}
+				defer resp.Body.Close()
+
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					fmt.Printf("Error reading response: %v\n", err)
+					return
+				}
+
+				if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+					fmt.Printf("Error claiming task: %s\n", string(body))
+					return
+				}
+
+				fmt.Printf("Successfully claimed task %d as user %d (dev mode)\n", taskID, userID)
 				return
 			}
 
-			claimTask(uint(taskID), uint(userID))
+			apiClient := NewAPIClient()
+			resp, err := apiClient.DoAuthenticatedRequest(http.MethodPost, "/claims", payload)
+			if err != nil {
+				fmt.Printf("Error claiming task: %v\n", err)
+				return
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Printf("Error reading response: %v\n", err)
+				return
+			}
+			if resp.StatusCode != http.StatusCreated {
+				fmt.Printf("Error claiming task: %s\n", string(body))
+				return
+			}
+			fmt.Printf("Successfully claimed task %d\n", taskID)
 		},
 	}
-	claimCmd.Flags().StringP("user-id", "u", "", "ID of the user claiming the task")
-	claimCmd.MarkFlagRequired("user-id")
+	claimCmd.Flags().StringP("dev-user-id", "", "", "Development only: specify user ID to claim task as (bypasses auth)")
 	taskCmd.AddCommand(claimCmd)
 
 	submitCmd := &cobra.Command{
-		Use:   "submit [task-id]",
+		Use:   "submit [task-id] --pr-url [PR-URL]",
 		Short: "Submit a PR for a claimed task",
 		Long:  `Submit a Pull Request URL for a task you have claimed.`,
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			taskIDStr := args[0]
-			userIDStr, _ := cmd.Flags().GetString("user-id")
 			prURL, _ := cmd.Flags().GetString("pr-url")
+			devUserID, _ := cmd.Flags().GetString("dev-user-id")
 
-			if userIDStr == "" || prURL == "" {
-				fmt.Println("Error: --user-id and --pr-url flags are required.")
+			if prURL == "" {
+				fmt.Println("Error: --pr-url flag is required.")
 				return
 			}
 
@@ -155,67 +228,69 @@ func NewTaskCmd() *cobra.Command {
 				fmt.Printf("Error: Invalid task ID: %v\n", err)
 				return
 			}
-			userID, err := strconv.ParseUint(userIDStr, 10, 64)
-			if err != nil {
-				fmt.Printf("Error: Invalid user ID: %v\n", err)
+
+			payload := map[string]interface{}{
+				"task_id": uint(taskID),
+				"pr_url":  prURL,
+			}
+
+			// Development mode: bypass authentication if dev-user-id is provided
+			if devUserID != "" {
+				userID, err := strconv.ParseUint(devUserID, 10, 64)
+				if err != nil {
+					fmt.Printf("Error: Invalid dev-user-id: %v\n", err)
+					return
+				}
+				payload["user_id"] = uint(userID)
+
+				// Use direct HTTP request for development
+				jsonData, _ := json.Marshal(payload)
+				resp, err := http.Post("http://localhost:8080/dev/contributions", "application/json", strings.NewReader(string(jsonData)))
+				if err != nil {
+					fmt.Printf("Error submitting contribution: %v\n", err)
+					return
+				}
+				defer resp.Body.Close()
+
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					fmt.Printf("Error reading response: %v\n", err)
+					return
+				}
+				if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+					fmt.Printf("Error submitting contribution: %s\n", string(body))
+					return
+				}
+				fmt.Printf("Successfully submitted contribution for task %d as user %d (dev mode)\n", taskID, userID)
 				return
 			}
 
-			submitContribution(uint(taskID), uint(userID), prURL)
+			apiClient := NewAPIClient()
+			resp, err := apiClient.DoAuthenticatedRequest(http.MethodPost, "/contributions", payload)
+			if err != nil {
+				fmt.Printf("Error submitting contribution: %v\n", err)
+				return
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Printf("Error reading response: %v\n", err)
+				return
+			}
+			if resp.StatusCode != http.StatusCreated {
+				fmt.Printf("Error submitting contribution: %s\n", string(body))
+				return
+			}
+
+			fmt.Printf("Successfully submitted contribution for task %d\n", taskID)
 		},
 	}
-	submitCmd.Flags().StringP("user-id", "u", "", "ID of the user submitting the PR")
 	submitCmd.Flags().String("pr-url", "", "Full URL of the Pull Request (e.g., https://github.com/org/repo/pull/123)")
-	submitCmd.MarkFlagRequired("user-id")
+	submitCmd.Flags().StringP("dev-user-id", "", "", "Development only: specify user ID to submit as (bypasses auth)")
 	submitCmd.MarkFlagRequired("pr-url")
 	taskCmd.AddCommand(submitCmd)
 
 	return taskCmd
-}
-
-func createTask(projectID uint, title, description, difficulty string, estimatedHours int, tags, skills []string, bounty float64) {
-	const serverURL = "http://localhost:8080/tasks"
-
-	payloadMap := map[string]interface{}{
-		"project_id":       projectID,
-		"title":            title,
-		"description":      description,
-		"difficulty_level": difficulty,
-		"estimated_hours":  estimatedHours,
-		"bounty_amount":    bounty,
-	}
-	if len(tags) > 0 {
-		payloadMap["tags"] = tags
-	}
-	if len(skills) > 0 {
-		payloadMap["skills_required"] = skills
-	}
-
-	payload, err := json.Marshal(payloadMap)
-	if err != nil {
-		fmt.Printf("Error creating request payload: %v\n", err)
-		return
-	}
-
-	resp, err := http.Post(serverURL, "application/json", bytes.NewBuffer(payload))
-	if err != nil {
-		fmt.Printf("Error: Could not connect to the OSM server at %s. Is it running?\n", serverURL)
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Error reading server response: %v\n", err)
-		return
-	}
-
-	if resp.StatusCode == http.StatusCreated {
-		fmt.Println("Task created successfully!")
-	} else {
-		fmt.Printf("Error: Failed to create task (Status: %s)\n", resp.Status)
-		fmt.Printf("Response: %s\n", string(body))
-	}
 }
 
 func listTasks(projectIDStr, status string) {
@@ -266,71 +341,5 @@ func listTasks(projectIDStr, status string) {
 	for _, t := range tasks {
 		fmt.Printf("ID: %d, Title: %s, Project ID: %d, Status: %s, Bounty: %.2f\n",
 			t.ID, t.Title, t.ProjectID, t.Status, t.BountyAmount)
-	}
-}
-
-func claimTask(taskID, userID uint) {
-	const serverURL = "http://localhost:8080/claims"
-	payload, err := json.Marshal(map[string]uint{
-		"task_id": taskID,
-		"user_id": userID,
-	})
-	if err != nil {
-		fmt.Printf("Error creating request payload: %v\n", err)
-		return
-	}
-
-	resp, err := http.Post(serverURL, "application/json", bytes.NewBuffer(payload))
-	if err != nil {
-		fmt.Printf("Error: Could not connect to the OSM server at %s. Is it running?\n", serverURL)
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Error reading server response: %v\n", err)
-		return
-	}
-
-	if resp.StatusCode == http.StatusCreated {
-		fmt.Println("Task claimed successfully!")
-	} else {
-		fmt.Printf("Error: Failed to claim task (Status: %s)\n", resp.Status)
-		fmt.Printf("Response: %s\n", string(body))
-	}
-}
-
-func submitContribution(taskID, userID uint, prURL string) {
-	const serverURL = "http://localhost:8080/contributions"
-
-	payload, err := json.Marshal(map[string]interface{}{
-		"task_id": taskID,
-		"user_id": userID,
-		"pr_url":  prURL,
-	})
-	if err != nil {
-		fmt.Printf("Error creating request payload: %v\n", err)
-		return
-	}
-
-	resp, err := http.Post(serverURL, "application/json", bytes.NewBuffer(payload))
-	if err != nil {
-		fmt.Printf("Error: Could not connect to the OSM server at %s. Is it running?\n", serverURL)
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Error reading server response: %v\n", err)
-		return
-	}
-
-	if resp.StatusCode == http.StatusCreated {
-		fmt.Println("Contribution submitted successfully!")
-	} else {
-		fmt.Printf("Error: Failed to submit contribution (Status: %s)\n", resp.Status)
-		fmt.Printf("Response: %s\n", string(body))
 	}
 }

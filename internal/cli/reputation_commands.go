@@ -1,14 +1,10 @@
 package cli
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"ossyne/internal/models"
 	"strconv"
-
 	"github.com/spf13/cobra"
 )
 
@@ -24,21 +20,15 @@ func NewRatingsCmd() *cobra.Command {
 		Short: "Endorse a user as a mentor",
 		Long:  `A mentor can endorse a user for their work on a specific task/claim, boosting their ratings.`,
 		Run: func(cmd *cobra.Command, args []string) {
-			mentorIDStr, _ := cmd.Flags().GetString("mentor-id")
 			userIDStr, _ := cmd.Flags().GetString("user-id")
 			relatedIDStr, _ := cmd.Flags().GetString("related-id")
 			notes, _ := cmd.Flags().GetString("notes")
 
-			if mentorIDStr == "" || userIDStr == "" || relatedIDStr == "" {
-				fmt.Println("Error: --mentor-id, --user-id, and --related-id are required.")
+			if userIDStr == "" || relatedIDStr == "" {
+				fmt.Println("Error: --user-id and --related-id are required.")
 				return
 			}
 
-			mentorID, err := strconv.ParseUint(mentorIDStr, 10, 64)
-			if err != nil {
-				fmt.Printf("Error: Invalid mentor-id: %v\n", err)
-				return
-			}
 			userID, err := strconv.ParseUint(userIDStr, 10, 64)
 			if err != nil {
 				fmt.Printf("Error: Invalid user-id: %v\n", err)
@@ -50,14 +40,37 @@ func NewRatingsCmd() *cobra.Command {
 				return
 			}
 
-			mentorEndorse(uint(mentorID), uint(userID), uint(relatedID), notes)
+			apiClient := NewAPIClient()
+			payloadMap := map[string]interface{}{
+				"user_id":    uint(userID),
+				"related_id": uint(relatedID),
+				"notes":      notes,
+			}
+
+			resp, err := apiClient.DoAuthenticatedRequest(http.MethodPost, "/mentor/endorse", payloadMap)
+			if err != nil {
+				fmt.Printf("Error endorsing user: %v\n", err)
+				return
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Printf("Error reading response: %v\n", err)
+				return
+			}
+
+			if resp.StatusCode != http.StatusCreated {
+				fmt.Printf("Error endorsing user: %s\n", string(body))
+				return
+			}
+
+			fmt.Printf("Successfully endorsed user %d\n", userID)
 		},
 	}
-	endorseCmd.Flags().StringP("mentor-id", "m", "", "ID of the mentor performing the endorsement")
 	endorseCmd.Flags().StringP("user-id", "u", "", "ID of the user being endorsed")
 	endorseCmd.Flags().StringP("related-id", "r", "", "ID of the related task or claim (e.g., Task ID)")
 	endorseCmd.Flags().StringP("notes", "n", "", "Optional notes for the endorsement")
-	endorseCmd.MarkFlagRequired("mentor-id")
 	endorseCmd.MarkFlagRequired("user-id")
 	endorseCmd.MarkFlagRequired("related-id")
 	ratingsCmd.AddCommand(endorseCmd)
@@ -84,7 +97,27 @@ func NewAdminCmd() *cobra.Command {
 				fmt.Printf("Error: Invalid contribution ID: %v\n", err)
 				return
 			}
-			acceptContribution(uint(contribID))
+
+			apiClient := NewAPIClient()
+			resp, err := apiClient.DoAuthenticatedRequest(http.MethodPut, fmt.Sprintf("/contributions/%d/accept", contribID), nil)
+			if err != nil {
+				fmt.Printf("Error accepting contribution: %v\n", err)
+				return
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Printf("Error reading response: %v\n", err)
+				return
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				fmt.Printf("Error accepting contribution: %s\n", string(body))
+				return
+			}
+
+			fmt.Println("Contribution accepted successfully!")
 		},
 	}
 	adminCmd.AddCommand(acceptContribCmd)
@@ -108,7 +141,31 @@ func NewAdminCmd() *cobra.Command {
 				fmt.Printf("Error: Invalid contribution ID: %v\n", err)
 				return
 			}
-			rejectContribution(uint(contribID), reason)
+
+			apiClient := NewAPIClient()
+			payloadMap := map[string]interface{}{
+				"reason": reason,
+			}
+
+			resp, err := apiClient.DoAuthenticatedRequest(http.MethodPut, fmt.Sprintf("/contributions/%d/reject", contribID), payloadMap)
+			if err != nil {
+				fmt.Printf("Error rejecting contribution: %v\n", err)
+				return
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Printf("Error reading response: %v\n", err)
+				return
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				fmt.Printf("Error rejecting contribution: %s\n", string(body))
+				return
+			}
+
+			fmt.Println("Contribution rejected successfully!")
 		},
 	}
 	rejectContribCmd.Flags().StringP("reason", "r", "", "Reason for rejecting the contribution")
@@ -126,7 +183,32 @@ func NewAdminCmd() *cobra.Command {
 				fmt.Println("Error: --name flag is required.")
 				return
 			}
-			createSkill(name, description)
+
+			apiClient := NewAPIClient()
+			payloadMap := map[string]interface{}{
+				"name":        name,
+				"description": description,
+			}
+
+			resp, err := apiClient.DoAuthenticatedRequest(http.MethodPost, "/admin/skills", payloadMap)
+			if err != nil {
+				fmt.Printf("Error creating skill: %v\n", err)
+				return
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Printf("Error reading response: %v\n", err)
+				return
+			}
+
+			if resp.StatusCode != http.StatusCreated {
+				fmt.Printf("Error creating skill: %s\n", string(body))
+				return
+			}
+
+			fmt.Printf("Successfully created skill '%s'\n", name)
 		},
 	}
 	createSkillCmd.Flags().StringP("name", "n", "", "Name of the skill (e.g., 'Go', 'React', 'Documentation')")
@@ -148,11 +230,42 @@ func NewAdminCmd() *cobra.Command {
 				return
 			}
 			userID, err := strconv.ParseUint(userIDStr, 10, 64)
-			if err != nil { fmt.Printf("Error: Invalid user-id: %v\n", err); return }
+			if err != nil {
+				fmt.Printf("Error: Invalid user-id: %v\n", err)
+				return
+			}
 			skillID, err := strconv.ParseUint(skillIDStr, 10, 64)
-			if err != nil { fmt.Printf("Error: Invalid skill-id: %v\n", err); return }
+			if err != nil {
+				fmt.Printf("Error: Invalid skill-id: %v\n", err)
+				return
+			}
 
-			addUserSkill(uint(userID), uint(skillID), level)
+			apiClient := NewAPIClient()
+			payloadMap := map[string]interface{}{
+				"user_id":           uint(userID),
+				"skill_id":          uint(skillID),
+				"proficiency_level": level,
+			}
+
+			resp, err := apiClient.DoAuthenticatedRequest(http.MethodPost, "/admin/users/skills", payloadMap)
+			if err != nil {
+				fmt.Printf("Error adding user skill: %v\n", err)
+				return
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Printf("Error reading response: %v\n", err)
+				return
+			}
+
+			if resp.StatusCode != http.StatusCreated {
+				fmt.Printf("Error adding user skill: %s\n", string(body))
+				return
+			}
+
+			fmt.Printf("Successfully added skill %d to user %d with level %s\n", skillID, userID, level)
 		},
 	}
 	addUserSkillCmd.Flags().StringP("user-id", "u", "", "ID of the user to add the skill to")
@@ -167,207 +280,30 @@ func NewAdminCmd() *cobra.Command {
 		Short: "List all skills",
 		Long:  `Lists all defined skills in the marketplace.`,
 		Run: func(cmd *cobra.Command, args []string) {
-			listSkills()
+			apiClient := NewAPIClient()
+			resp, err := apiClient.DoAuthenticatedRequest(http.MethodGet, "/admin/skills", nil)
+			if err != nil {
+				fmt.Printf("Error listing skills: %v\n", err)
+				return
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Printf("Error reading response: %v\n", err)
+				return
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				fmt.Printf("Error listing skills: %s\n", string(body))
+				return
+			}
+
+			fmt.Println("Skills:")
+			fmt.Println(string(body))
 		},
 	}
 	adminCmd.AddCommand(listSkillsCmd)
 
 	return adminCmd
-}
-
-func mentorEndorse(mentorID, userID, relatedID uint, notes string) {
-	const serverURL = "http://localhost:8080/mentor/endorse"
-
-	payload, err := json.Marshal(map[string]interface{}{
-		"mentor_id":  mentorID,
-		"user_id":    userID,
-		"related_id": relatedID,
-		"notes":      notes,
-	})
-	if err != nil {
-		fmt.Printf("Error creating request payload: %v\n", err)
-		return
-	}
-	resp, err := http.Post(serverURL, "application/json", bytes.NewBuffer(payload))
-	if err != nil {
-		fmt.Printf("Error: Could not connect to the OSM server at %s. Is it running?\n", serverURL)
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Error reading server response: %v\n", err)
-		return
-	}
-	if resp.StatusCode == http.StatusOK {
-		fmt.Println("User endorsed successfully!")
-	} else {
-		fmt.Printf("Error: Failed to endorse user (Status: %s)\n", resp.Status)
-		fmt.Printf("Response: %s\n", string(body))
-	}
-}
-
-func acceptContribution(contributionID uint) {
-	url := fmt.Sprintf("http://localhost:8080/contributions/%d/accept", contributionID)
-
-	req, err := http.NewRequest(http.MethodPut, url, nil)
-	if err != nil {
-		fmt.Printf("Error creating request: %v\n", err)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("Error: Could not connect to the OSM server at %s. Is it running?\n", url)
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Error reading server response: %v\n", err)
-		return
-	}
-	if resp.StatusCode == http.StatusOK {
-		fmt.Println("Contribution accepted successfully!")
-	} else {
-		fmt.Printf("Error: Failed to accept contribution (Status: %s)\n", resp.Status)
-		fmt.Printf("Response: %s\n", string(body))
-	}
-}
-
-func rejectContribution(contributionID uint, reason string) {
-	url := fmt.Sprintf("http://localhost:8080/contributions/%d/reject", contributionID)
-
-	payload, err := json.Marshal(map[string]string{
-		"reason": reason,
-	})
-	if err != nil {
-		fmt.Printf("Error creating request payload: %v\n", err)
-		return
-	}
-	req, err := http.NewRequest(http.MethodPut, url, bytes.NewBuffer(payload))
-	if err != nil {
-		fmt.Printf("Error creating request: %v\n", err)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("Error: Could not connect to the OSM server at %s. Is it running?\n", url)
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Error reading server response: %v\n", err)
-		return
-	}
-	if resp.StatusCode == http.StatusOK {
-		fmt.Println("Contribution rejected successfully!")
-	} else {
-		fmt.Printf("Error: Failed to reject contribution (Status: %s)\n", resp.Status)
-		fmt.Printf("Response: %s\n", string(body))
-	}
-}
-
-func createSkill(name, description string) {
-	const serverURL = "http://localhost:8080/skills"
-
-	payload, err := json.Marshal(map[string]string{
-		"name":        name,
-		"description": description,
-	})
-	if err != nil {
-		fmt.Printf("Error creating request payload: %v\n", err)
-		return
-	}
-	resp, err := http.Post(serverURL, "application/json", bytes.NewBuffer(payload))
-	if err != nil {
-		fmt.Printf("Error: Could not connect to the OSM server at %s. Is it running?\n", serverURL)
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Error reading server response: %v\n", err)
-		return
-	}
-	if resp.StatusCode == http.StatusCreated {
-		fmt.Println("Skill created successfully!")
-	} else {
-		fmt.Printf("Error: Failed to create skill (Status: %s)\n", resp.Status)
-		fmt.Printf("Response: %s\n", string(body))
-	}
-}
-
-func listSkills() {
-	const serverURL = "http://localhost:8080/skills"
-
-	resp, err := http.Get(serverURL)
-	if err != nil {
-		fmt.Printf("Error: Could not connect to the OSM server at %s. Is it running?\n", serverURL)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("Error: Failed to list skills (Status: %s)\n", resp.Status)
-		return
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Error reading server response: %v\n", err)
-		return
-	}
-	var skills []models.Skill
-	if err := json.Unmarshal(body, &skills); err != nil {
-		fmt.Printf("Error parsing server response: %v\n", err)
-		return
-	}
-	if len(skills) == 0 {
-		fmt.Println("No skills found.")
-		return
-	}
-
-	fmt.Println("--- Skills ---")
-	for _, s := range skills {
-		fmt.Printf("ID: %d, Name: %s, Description: %s\n", s.ID, s.Name, s.Description)
-	}
-}
-
-func addUserSkill(userID, skillID uint, level string) {
-	const serverURL = "http://localhost:8080/users/skills"
-
-	payload, err := json.Marshal(map[string]interface{}{
-		"user_id":  userID,
-		"skill_id": skillID,
-		"level":    level,
-	})
-	if err != nil {
-		fmt.Printf("Error creating request payload: %v\n", err)
-		return
-	}
-	resp, err := http.Post(serverURL, "application/json", bytes.NewBuffer(payload))
-	if err != nil {
-		fmt.Printf("Error: Could not connect to the OSM server at %s. Is it running?\n", serverURL)
-		return
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("Error reading server response: %v\n", err)
-		return
-	}
-	if resp.StatusCode == http.StatusCreated {
-		fmt.Println("User skill added successfully!")
-	} else {
-		fmt.Printf("Error: Failed to add user skill (Status: %s)\n", resp.Status)
-		fmt.Printf("Response: %s\n", string(body))
-	}
 }
