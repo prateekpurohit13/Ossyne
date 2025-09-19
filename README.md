@@ -239,8 +239,8 @@ This project is licensed under the [MIT License](LICENSE) - see the LICENSE file
 
 **Made with ❤️ for the open-source community**
 
-[![GitHub stars](https://img.shields.io/github/stars/your-username/ossyne?style=social)](https://github.com/your-username/ossyne/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/your-username/ossyne?style=social)](https://github.com/your-username/ossyne/network/members)
+[![GitHub stars](https://img.shields.io/github/stars/prateekpurohit13/ossyne?style=social)](https://github.com/prateekpurohit13/ossyne/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/prateekpurohit13/ossyne?style=social)](https://github.com/prateekpurohit13/ossyne/network/members)
 
 [⬆ Back to top](#ossyne-the-cli-first-open-source-marketplace)
 
