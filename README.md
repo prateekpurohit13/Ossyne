@@ -20,7 +20,7 @@
 
 ## 🚀 Introduction
 
-**OSSYNE** is an innovative, command-line interface (CLI) first DevEx platform designed designed to seamlessly connect open-source project maintainers with talented contributors. Inspired by the principles of platforms like Upwork but built from the ground up for developer workflows, OSSYNE empowers you to find, claim, contribute to, and manage open-source tasks directly from your terminal.
+**OSSYNE** is an innovative, command-line interface (CLI) first DevEx platform designed to seamlessly connect open-source project maintainers with talented contributors. Inspired by the principles of platforms like Upwork but built from the ground up for developer workflows, OSSYNE empowers you to find, claim, contribute to, and manage open-source tasks directly from your terminal.
 
 Whether you're a maintainer looking for skilled help or a developer seeking to build your portfolio and earn bounties, OSSYNE offers a developer-centric experience with:
 
